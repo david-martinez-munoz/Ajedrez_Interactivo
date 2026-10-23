@@ -1,0 +1,1557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ajedrez 3D · Control por gestos</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #1a1a1a; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #eee; }
+  #scene { position: fixed; inset: 0; display: block; }
+
+  #hud { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10;
+    display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; justify-content: center;
+    padding: 8px 16px; border-radius: 14px; background: rgba(20,20,22,.78);
+    border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    font-size: 14px; max-width: calc(100vw - 24px); }
+  .cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .lbl { opacity: .55; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1px solid rgba(255,255,255,.35); }
+  #turnDot.w { background: #f1ede2; }
+  #turnDot.b { background: #2a2a2e; }
+  #handDot.off { background: #777; }
+  #handDot.point { background: #4fc3f7; box-shadow: 0 0 8px #4fc3f7; }
+  #handDot.grab { background: #39ff14; box-shadow: 0 0 8px #39ff14; }
+  #alert { min-width: 100px; font-weight: 600; }
+  #alert.warn { color: #ffb020; }
+  #alert.mate { color: #ff5555; }
+  #alert.info { color: #9ecbff; }
+  #sel { min-width: 90px; }
+
+  .btn { background: #2d2d31; color: #eee; border: 1px solid rgba(255,255,255,.2);
+    border-radius: 9px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  .btn:hover { background: #3a3a40; }
+  .seg { display: inline-flex; border: 1px solid rgba(255,255,255,.2); border-radius: 9px; overflow: hidden; }
+  .seg button { background: #2d2d31; color: #ccc; border: 0; padding: 8px 15px; font-size: 13px; cursor: pointer; }
+  .seg button + button { border-left: 1px solid rgba(255,255,255,.15); }
+  .seg button.on { background: #4fc3f7; color: #04202c; font-weight: 700; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; user-select: none;
+    padding: 6px 8px; border-radius: 9px; }
+  .chk input { accent-color: #4fc3f7; width: 15px; height: 15px; cursor: pointer; }
+  /* Resalte cuando la mano apunta a un control del menú */
+  .hh { outline: 2px solid #39ff14; outline-offset: 2px; box-shadow: 0 0 12px rgba(57,255,20,.6); }
+
+  #pinchBar { width: 74px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.14); overflow: hidden; }
+  #pinchFill { display: block; height: 100%; width: 0; background: #4fc3f7; }
+  #pinchFill.on { background: #39ff14; }
+
+  /* Retícula 2D que sigue la mano */
+  #reticle { position: fixed; left: 0; top: 0; width: 38px; height: 38px; margin: -19px 0 0 -19px;
+    border-radius: 50%; border: 2px solid #4fc3f7; box-shadow: 0 0 12px rgba(79,195,247,.7);
+    pointer-events: none; z-index: 20; display: none;
+    transition: width .08s, height .08s, margin .08s, border-color .08s, background .08s; }
+  #reticle::after { content: ''; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px;
+    margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: #fff; }
+  #reticle.pinch { width: 22px; height: 22px; margin: -11px 0 0 -11px; border-color: #39ff14;
+    box-shadow: 0 0 14px #39ff14; background: rgba(57,255,20,.22); }
+
+  #help { position: fixed; left: 14px; bottom: 14px; z-index: 10; max-width: 410px;
+    font-size: 12px; line-height: 1.55; opacity: .78; padding: 8px 12px; border-radius: 10px;
+    background: rgba(20,20,22,.66); border: 1px solid rgba(255,255,255,.08); }
+  #help b { color: #fff; }
+
+  #pip { position: fixed; right: 14px; bottom: 14px; width: 220px; aspect-ratio: 4 / 3; z-index: 10;
+    border-radius: 12px; overflow: hidden; background: #000; border: 1px solid rgba(255,255,255,.18);
+    box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+  #pip video, #pip canvas { position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; transform: scaleX(-1); }
+  #camStatus { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 3px 8px;
+    font-size: 11px; background: rgba(0,0,0,.55); }
+</style>
+
+<!-- Dependencias vía CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1640029074/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.js"></script>
+<script>
+  // Respaldo por si el CDN principal de chess.js falla o no expone el global `Chess`
+  if (typeof Chess === 'undefined') {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"><\/script>');
+  }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="reticle"></div>
+
+<div id="hud">
+  <div class="cell"><span class="lbl">Turno</span><span id="turnDot" class="dot w"></span><b id="turn">Blancas</b></div>
+  <div class="cell"><span class="lbl">Mano</span><span id="handDot" class="dot off"></span><b id="hand">Mano no detectada</b></div>
+  <div class="cell" title="Se llena al juntar pulgar e índice. Al llegar al máximo agarra."><span class="lbl">Pellizco</span><div id="pinchBar"><i id="pinchFill"></i></div></div>
+  <div class="cell"><span class="lbl">Apuntas</span><b id="sel">—</b></div>
+  <div id="alert"></div>
+  <div class="cell"><span class="lbl">Vista</span>
+    <div class="seg"><button id="v3d" class="on" type="button">3D</button><button id="v2d" type="button">2D</button></div>
+  </div>
+  <div class="cell">
+    <label class="chk"><input type="checkbox" id="autoRot" checked> Auto-rotar por turno</label>
+    <button id="flip" class="btn" type="button">Girar</button>
+  </div>
+  <button id="reset" class="btn" type="button">Reiniciar partida</button>
+</div>
+
+<div id="help">
+  <b>Apuntar:</b> el aro azul es tu cursor; la pieza que puedes coger se ilumina en ámbar y sube un poco.<br>
+  <b>Pellizcar</b> (pulgar + índice) sobre ella para agarrarla, soltar sobre la casilla verde para mover.<br>
+  <b>Girar la vista:</b> pellizca sobre una casilla vacía y arrastra · <b>dos manos pellizcando:</b> separa para acercar, gira para rotar.<br>
+  <b>Menú:</b> apunta a un botón y pellizca. Sin webcam: mantén <b>Shift</b> y usa el ratón.
+</div>
+
+<div id="pip">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="overlay" width="640" height="480"></canvas>
+  <div id="camStatus">Cámara: iniciando…</div>
+</div>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================================================
+ *  CONSTANTES
+ * ============================================================ */
+const LIFT_3D = 1.2;          // altura a la que se levanta la pieza en 3D
+const LIFT_2D = 0.3;          // altura en la vista 2D (cenital)
+const PINCH_ON = 0.32;        // agarre: distancia pulgar–índice / tamaño de la mano
+const PINCH_OFF = 0.52;       // suelta (histéresis)
+const LOCK_AT = 0.35;         // al cerrar los dedos más de esto, la selección queda bloqueada
+const ALPHA = 0.25;           // factor base del filtro Lerp exponencial
+const HAND_GAIN = 1.5;        // amplía el recorrido útil de la mano dentro de la imagen
+const HAND_LOST_GRACE = 0.8;  // segundos antes de cancelar un arrastre si se pierde la mano
+const PICK_PX = 28;           // tolerancia (px) si el rayo no toca ninguna pieza
+const FILES = 'abcdefgh';
+const PIECE_NAMES = { p: 'Peón', r: 'Torre', n: 'Caballo', b: 'Alfil', q: 'Reina', k: 'Rey' };
+
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+if (typeof THREE === 'undefined' || typeof Chess === 'undefined') {
+  $('alert').className = 'mate';
+  $('alert').textContent = 'No se pudieron cargar las librerías (revisa tu conexión).';
+  return;
+}
+
+let viewMode = '3d';          // '3d' | '2d'
+let autoRotate = true;
+const LIFT = () => (viewMode === '2d' ? LIFT_2D : LIFT_3D);
+
+/* ============================================================
+ *  LÓGICA DE AJEDREZ (chess.js, compatible 0.10 – 0.13)
+ * ============================================================ */
+const chess = new Chess();
+const rules = {
+  check:     () => (chess.in_check     || chess.isCheck).call(chess),
+  mate:      () => (chess.in_checkmate || chess.isCheckmate).call(chess),
+  stalemate: () => (chess.in_stalemate || chess.isStalemate).call(chess),
+  draw:      () => (chess.in_draw      || chess.isDraw).call(chess),
+  over:      () => (chess.game_over    || chess.isGameOver).call(chess),
+};
+
+/* ============================================================
+ *  ESCENA, CÁMARA, LUCES, RENDERER
+ * ============================================================ */
+const canvas = $('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1a1a);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(0, 10.5, 10.5);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enablePan = false;
+controls.update();
+
+function applyControlLimits() {
+  if (viewMode === '3d') {
+    controls.minPolarAngle = 0.12;
+    controls.maxPolarAngle = Math.PI * 0.47;
+    controls.minDistance = 7;
+    controls.maxDistance = 24;
+    controls.enableRotate = true;
+    controls.enableZoom = true;
+  } else {
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    controls.minDistance = 0;
+    controls.maxDistance = 100;
+    controls.enableRotate = false;
+    controls.enableZoom = false;
+  }
+}
+applyControlLimits();
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x405040, 0.25));
+const sun = new THREE.DirectionalLight(0xffffff, 0.85);
+sun.position.set(6, 13, 7);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -7; sun.shadow.camera.right = 7;
+sun.shadow.camera.top = 7;   sun.shadow.camera.bottom = -7;
+sun.shadow.camera.near = 1;  sun.shadow.camera.far = 30;
+sun.shadow.bias = -0.0004;
+sun.shadow.radius = 4;
+scene.add(sun);
+
+// Entorno reflectante procedimental (da brillo a las piezas sin descargar ninguna imagen)
+function setupEnvironment() {
+  try {
+    const pm = new THREE.PMREMGenerator(renderer);
+    const env = new THREE.Scene();
+    const geo = new THREE.SphereGeometry(40, 32, 20);
+    const pos = geo.attributes.position;
+    const cols = [];
+    const top = new THREE.Color(0xe4eeff), mid = new THREE.Color(0x8fa08f), bot = new THREE.Color(0x2c3d2a);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const t = pos.getY(i) / 40;
+      if (t > 0) c.copy(mid).lerp(top, Math.pow(t, 0.6));
+      else c.copy(mid).lerp(bot, Math.pow(-t, 0.6));
+      cols.push(c.r, c.g, c.b);
+    }
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+    env.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide })));
+    [[14, 22, 10, 5], [-18, 16, -6, 3.5], [0, 30, -14, 3], [20, 8, -16, 2.5]].forEach(([x, y, z, k]) => {
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(14, 10),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(k, k, k), side: THREE.DoubleSide })
+      );
+      m.position.set(x, y, z);
+      m.lookAt(0, 0, 0);
+      env.add(m);
+    });
+    const rt = pm.fromScene(env, 0.03);
+    scene.environment = rt.texture;
+    pm.dispose();
+  } catch (e) {
+    console.warn('Sin mapa de entorno:', e);
+  }
+}
+setupEnvironment();
+
+// Suelo que recibe sombras
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(14, 64),
+  new THREE.MeshStandardMaterial({ color: 0x1f2a22, roughness: 0.95, envMapIntensity: 0.1 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.position.y = -0.52;
+floor.receiveShadow = true;
+scene.add(floor);
+
+/* ============================================================
+ *  CÁMARA ANIMADA (rotación por turno, cambio 3D/2D)
+ *  Azimut 0 = cámara en +Z (blancas abajo) · azimut π = lado de las negras
+ * ============================================================ */
+const sphTmp = new THREE.Spherical();
+const vTmp = new THREE.Vector3();
+const camAnim = { active: false, t: 0, dur: 1, from: null, to: null };
+
+function currentSph() {
+  sphTmp.setFromVector3(vTmp.copy(camera.position).sub(controls.target));
+  return { az: sphTmp.theta, pol: sphTmp.phi, dist: sphTmp.radius };
+}
+
+function dist2D() {
+  const halfTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  return Math.max(13.7, 10.6 / (2 * halfTan * camera.aspect));
+}
+
+function turnAz() { return chess.turn() === 'w' ? 0 : Math.PI; }
+
+function startCamAnim(to, dur) {
+  const from = currentSph();
+  const goal = {
+    az: to.az !== undefined ? to.az : from.az,
+    pol: to.pol !== undefined ? to.pol : from.pol,
+    dist: to.dist !== undefined ? to.dist : from.dist,
+  };
+  let d = goal.az - from.az;
+  d = Math.atan2(Math.sin(d), Math.cos(d));      // camino más corto
+  goal.az = from.az + d;
+  camAnim.from = from; camAnim.to = goal;
+  camAnim.t = 0; camAnim.dur = dur || 1.0; camAnim.active = true;
+  controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI;
+  controls.minDistance = 0; controls.maxDistance = 100;
+}
+
+function updateCamAnim(dt) {
+  if (!camAnim.active) return;
+  camAnim.t = Math.min(1, camAnim.t + dt / camAnim.dur);
+  const t = camAnim.t;
+  const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  const f = camAnim.from, g = camAnim.to;
+  camera.position.setFromSphericalCoords(
+    f.dist + (g.dist - f.dist) * e,
+    f.pol + (g.pol - f.pol) * e,
+    f.az + (g.az - f.az) * e
+  ).add(controls.target);
+  camera.lookAt(controls.target);
+  if (t >= 1) { camAnim.active = false; applyControlLimits(); }
+}
+
+/* ============================================================
+ *  UTILIDADES DE COORDENADAS
+ *  a1 = (-3.5, 0, +3.5) (blancas cerca de la cámara) · h8 = (+3.5, 0, -3.5)
+ * ============================================================ */
+function squareToPos(sq) {
+  const f = sq.charCodeAt(0) - 97;
+  const r = parseInt(sq[1], 10);
+  return new THREE.Vector3(f - 3.5, 0, 4.5 - r);
+}
+function posToSquare(x, z) {
+  const f = Math.floor(x + 4);
+  const r = Math.floor(5 - z);
+  if (f < 0 || f > 7 || r < 1 || r > 8) return null;
+  return FILES[f] + r;
+}
+
+/* ============================================================
+ *  TABLERO (césped) + COORDENADAS DENTRO DE LAS CASILLAS
+ * ============================================================ */
+function makeGrassTexture(light, seed) {
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  let s = seed * 9301 + 49297;
+  const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
+  g.fillStyle = light ? '#a4e25b' : '#84c64a';
+  g.fillRect(0, 0, S, S);
+  for (let i = 0; i < 24; i++) {
+    const x = rnd() * S, y = rnd() * S, r = 16 + rnd() * 28, n = 9;
+    g.beginPath();
+    for (let k = 0; k <= n; k++) {
+      const a = (k / n) * Math.PI * 2, rr = r * (0.7 + rnd() * 0.5);
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * 0.8;
+      if (k) g.lineTo(px, py); else g.moveTo(px, py);
+    }
+    g.closePath();
+    g.fillStyle = light ? 'rgba(196,244,128,0.55)' : 'rgba(108,170,58,0.55)';
+    g.fill();
+    g.lineWidth = 3;
+    g.strokeStyle = light ? 'rgba(118,180,60,0.35)' : 'rgba(58,108,34,0.45)';
+    g.stroke();
+  }
+  g.lineWidth = 12;
+  g.strokeStyle = light ? 'rgba(110,172,60,0.22)' : 'rgba(58,108,38,0.3)';
+  g.strokeRect(0, 0, S, S);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
+const lightTex = [1, 2, 3, 4].map(i => makeGrassTexture(true, i));
+const darkTex = [5, 6, 7, 8].map(i => makeGrassTexture(false, i));
+
+const boardGroup = new THREE.Group();
+scene.add(boardGroup);
+
+const squareMeshes = [];
+
+function makeLabel(text, color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = color;
+  g.font = 'bold 44px sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(text, 32, 34);
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.2, 0.2),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false })
+  );
+  m.rotation.x = -Math.PI / 2;
+  return m;
+}
+
+for (let f = 0; f < 8; f++) {
+  for (let r = 1; r <= 8; r++) {
+    const name = FILES[f] + r;
+    const isLight = (f + r) % 2 === 0;
+    const variants = isLight ? lightTex : darkTex;
+    const mat = new THREE.MeshStandardMaterial({
+      map: variants[(f * 7 + r * 3) % 4],
+      roughness: 0.9, metalness: 0.0, envMapIntensity: 0.15,
+      emissive: 0x000000, emissiveIntensity: 0
+    });
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.995, 0.2, 0.995), mat);
+    m.position.set(f - 3.5, -0.1, 4.5 - r);
+    m.receiveShadow = true;
+    m.name = name;
+    m.userData = { square: name, hlCur: 0, hlColor: new THREE.Color(0xffffff) };
+    boardGroup.add(m);
+    squareMeshes.push(m);
+
+    // Coordenadas en las esquinas, como en el diseño de referencia
+    const labelColor = isLight ? '#5f9a33' : '#eaffd2';
+    if (f === 0) {
+      const l = makeLabel(String(r), labelColor);
+      l.position.set(f - 3.5 - 0.33, 0.012, 4.5 - r - 0.33);
+      boardGroup.add(l);
+    }
+    if (r === 1) {
+      const l = makeLabel(FILES[f], labelColor);
+      l.position.set(f - 3.5 + 0.34, 0.012, 4.5 - r + 0.33);
+      boardGroup.add(l);
+    }
+  }
+}
+
+// Base y bisel perimetral
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x1d3626, roughness: 0.55, metalness: 0.05, envMapIntensity: 0.3 });
+const base = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.32, 8.9), frameMat);
+base.position.y = -0.36;
+base.receiveShadow = true; base.castShadow = true;
+boardGroup.add(base);
+
+function frameBar(w, d, x, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.3, d), frameMat);
+  m.position.set(x, -0.1, z);
+  m.castShadow = true; m.receiveShadow = true;
+  boardGroup.add(m);
+}
+frameBar(8.9, 0.45, 0, 4.225);
+frameBar(8.9, 0.45, 0, -4.225);
+frameBar(0.45, 8.0, 4.225, 0);
+frameBar(0.45, 8.0, -4.225, 0);
+const trimMat = new THREE.MeshStandardMaterial({ color: 0x142a1d, roughness: 0.5, envMapIntensity: 0.3 });
+[[8.1, 0.06, 0, 4.03], [8.1, 0.06, 0, -4.03], [0.06, 8.0, 4.03, 0], [0.06, 8.0, -4.03, 0]].forEach(([w, d, x, z]) => {
+  const t = new THREE.Mesh(new THREE.BoxGeometry(w, 0.28, d), trimMat);
+  t.position.set(x, -0.06, z);
+  boardGroup.add(t);
+});
+
+/* ============================================================
+ *  PERFILES DE LAS PIEZAS (compartidos por el 3D torneado y la silueta 2D)
+ *  Cada perfil es una lista de tramos [r, y]; cada tramo se suaviza con una spline.
+ * ============================================================ */
+const BASE_SEGS = [
+  [[0, 0], [0.43, 0]],
+  [[0.43, 0], [0.46, 0.025], [0.46, 0.075], [0.42, 0.11]],
+  [[0.42, 0.11], [0.34, 0.14], [0.31, 0.19]],
+];
+const PROFILES = {
+  p: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.2, 0.32], [0.15, 0.5], [0.13, 0.62]],
+    [[0.13, 0.62], [0.2, 0.64]],
+    [[0.2, 0.64], [0.235, 0.67], [0.2, 0.71]],
+    [[0.2, 0.71], [0.12, 0.73]],
+    [[0.12, 0.73], [0, 0.73]],
+  ]),
+  r: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.27, 0.35], [0.255, 0.55], [0.26, 0.78]],
+    [[0.26, 0.78], [0.3, 0.82], [0.37, 0.86]],
+    [[0.37, 0.86], [0.37, 1.06]],
+    [[0.37, 1.06], [0, 1.06]],
+  ]),
+  n: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.27, 0.3], [0.26, 0.42]],
+    [[0.26, 0.42], [0, 0.42]],
+  ]),
+  b: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.22, 0.35], [0.15, 0.55], [0.13, 0.7]],
+    [[0.13, 0.7], [0.25, 0.72]],
+    [[0.25, 0.72], [0.285, 0.755], [0.25, 0.79]],
+    [[0.25, 0.79], [0.13, 0.82]],
+    [[0.13, 0.82], [0.2, 0.9], [0.22, 1.03], [0.18, 1.15], [0.1, 1.26], [0.04, 1.33]],
+    [[0.04, 1.33], [0, 1.34]],
+  ]),
+  q: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.21, 0.4], [0.14, 0.7], [0.14, 0.95]],
+    [[0.14, 0.95], [0.27, 0.97]],
+    [[0.27, 0.97], [0.3, 1.0], [0.27, 1.04]],
+    [[0.27, 1.04], [0.16, 1.07]],
+    [[0.16, 1.07], [0.24, 1.14], [0.31, 1.28], [0.33, 1.4]],
+    [[0.33, 1.4], [0.27, 1.45]],
+    [[0.27, 1.45], [0, 1.45]],
+  ]),
+  k: BASE_SEGS.concat([
+    [[0.31, 0.19], [0.22, 0.45], [0.15, 0.85], [0.15, 1.05]],
+    [[0.15, 1.05], [0.27, 1.07]],
+    [[0.27, 1.07], [0.3, 1.1], [0.27, 1.14]],
+    [[0.27, 1.14], [0.17, 1.17]],
+    [[0.17, 1.17], [0.25, 1.24], [0.3, 1.36], [0.28, 1.46]],
+    [[0.28, 1.46], [0.2, 1.5]],
+    [[0.2, 1.5], [0, 1.5]],
+  ]),
+};
+
+function splineSeg(ctrl) {
+  const v = ctrl.map(p => new THREE.Vector2(p[0], p[1]));
+  if (v.length === 2) return v;
+  return new THREE.SplineCurve(v).getPoints(12 * (v.length - 1));
+}
+function buildProfile(segs) {
+  const out = [];
+  segs.forEach(s => {
+    splineSeg(s).forEach((p, i) => {
+      if (i === 0 && out.length) {
+        const l = out[out.length - 1];
+        if (Math.abs(l.x - p.x) < 1e-6 && Math.abs(l.y - p.y) < 1e-6) return;
+      }
+      out.push(p);
+    });
+  });
+  return out;
+}
+const profileCache = {};
+function profileFor(type) {
+  return profileCache[type] || (profileCache[type] = buildProfile(PROFILES[type]));
+}
+const latheCache = {};
+function latheFor(type) {
+  return latheCache[type] || (latheCache[type] = new THREE.LatheGeometry(profileFor(type), 56));
+}
+
+// Silueta del caballo (45 × 45, mirando a la izquierda). Se usa en 2D y se extruye en 3D.
+const KNIGHT_PATH = [
+  ['M', 12, 38], ['L', 33, 38],
+  ['C', 34, 33, 38, 26, 35, 18],
+  ['C', 33.5, 13.5, 30.5, 10, 28, 7.5],
+  ['L', 28.5, 3.5], ['L', 25.2, 6], ['L', 24, 3], ['L', 21.5, 7],
+  ['C', 16, 10.5, 11, 16, 8.5, 22.5],
+  ['C', 7.5, 25, 9, 27.5, 11.5, 27.5],
+  ['C', 14, 27.5, 16.5, 25.5, 19, 24],
+  ['C', 21.5, 25, 19.5, 29.5, 15, 32.5],
+  ['C', 12.5, 34.5, 11.5, 36, 12, 38],
+  ['Z'],
+];
+function tracePath(t, cmds, f) {
+  cmds.forEach(c => {
+    if (c[0] === 'M') { const p = f(c[1], c[2]); t.moveTo(p[0], p[1]); }
+    else if (c[0] === 'L') { const p = f(c[1], c[2]); t.lineTo(p[0], p[1]); }
+    else if (c[0] === 'C') {
+      const a = f(c[1], c[2]), b = f(c[3], c[4]), e = f(c[5], c[6]);
+      t.bezierCurveTo(a[0], a[1], b[0], b[1], e[0], e[1]);
+    } else if (c[0] === 'Z') t.closePath();
+  });
+}
+let knightGeo = null;
+function knightGeometry() {
+  if (knightGeo) return knightGeo;
+  const k = 0.034;
+  const shape = new THREE.Shape();
+  tracePath(shape, KNIGHT_PATH, (x, y) => [(x - 22.5) * k, (38 - y) * k]);
+  knightGeo = new THREE.ExtrudeGeometry(shape, {
+    depth: 0.3, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelSegments: 4, curveSegments: 14
+  });
+  knightGeo.translate(0, 0, -0.15);
+  return knightGeo;
+}
+
+/* ============================================================
+ *  PIEZAS 3D (torneadas, brillantes) + FICHAS 2D (siluetas con contorno)
+ * ============================================================ */
+// "Blancas" doradas y "negras" de cromo oscuro, como en el diseño de referencia
+const pieceMats = {
+  w: new THREE.MeshStandardMaterial({ color: 0xf0cb5a, metalness: 0.62, roughness: 0.22, envMapIntensity: 1.25 }),
+  b: new THREE.MeshStandardMaterial({ color: 0x1b1b20, metalness: 0.75, roughness: 0.17, envMapIntensity: 1.35 }),
+};
+const PIECE_H = { p: 1.07, r: 1.3, n: 1.46, b: 1.44, q: 1.62, k: 1.85 };
+
+const tex2DCache = {};
+function pieceTexture2D(type, color) {
+  const key = type + color;
+  if (tex2DCache[key]) return tex2DCache[key];
+
+  const S = 256, u = S / 45;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const g = c.getContext('2d');
+  g.scale(u, u);
+  const white = color === 'w';
+  const FILL = white ? '#ffffff' : '#2a2a2a';
+  const INK = '#0b0b0b';
+  const DET = white ? '#0b0b0b' : '#f2f2f2';
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.fillStyle = FILL; g.strokeStyle = INK; g.lineWidth = 1.6;
+
+  const SX = 27;
+  const SY = { p: 28, b: 23, q: 20.5, k: 18.5 }[type] || 20;
+  const T = (r, y) => [22.5 + r * SX, 38 - y * SY];
+  const fs = () => { g.fill(); g.stroke(); };
+  const poly = pts => { g.beginPath(); pts.forEach((p, i) => (i ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); };
+  const detail = (pts, w) => { g.save(); g.strokeStyle = DET; g.lineWidth = w || 1.1; poly(pts); g.stroke(); g.restore(); };
+  const circle = (x, y, r) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); fs(); };
+  const body = () => {
+    const pts = profileFor(type);
+    g.beginPath();
+    let q = T(0, 0);
+    g.moveTo(q[0], q[1]);
+    pts.forEach(p => { q = T(p.x, p.y); g.lineTo(q[0], q[1]); });
+    for (let i = pts.length - 1; i >= 0; i--) { q = T(-pts[i].x, pts[i].y); g.lineTo(q[0], q[1]); }
+    g.closePath();
+    fs();
+  };
+
+  switch (type) {
+    case 'p': {
+      body();
+      const h = T(0, 0.9);
+      circle(h[0], h[1], 5.2);
+      detail([T(-0.19, 0.66), T(0.19, 0.66)]);
+      break;
+    }
+    case 'r': {
+      poly([[9, 38], [36, 38], [36, 34], [33.5, 32], [33.5, 16], [36, 14], [36, 9], [30.5, 9], [30.5, 11.5],
+        [26, 11.5], [26, 9], [19, 9], [19, 11.5], [14.5, 11.5], [14.5, 9], [9, 9], [9, 14], [11.5, 16],
+        [11.5, 32], [9, 34]]);
+      g.closePath(); fs();
+      detail([[11.5, 16.4], [33.5, 16.4]]);
+      detail([[11.5, 31.6], [33.5, 31.6]]);
+      detail([[9, 14], [36, 14]]);
+      detail([[9, 34], [36, 34]]);
+      break;
+    }
+    case 'n': {
+      g.beginPath();
+      tracePath(g, KNIGHT_PATH, (x, y) => [x, y]);
+      fs();
+      g.beginPath(); g.rect(9, 34.5, 27, 3.7); fs();
+      g.fillStyle = DET;
+      g.beginPath(); g.arc(19.2, 14.4, 1.25, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(10.1, 24.3, 0.75, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.moveTo(30, 11); g.quadraticCurveTo(34.5, 18, 33, 27);
+      g.strokeStyle = DET; g.lineWidth = 1.1; g.stroke();
+      g.beginPath(); g.moveTo(16.5, 23.6); g.quadraticCurveTo(18, 20, 21.5, 19.4); g.stroke();
+      break;
+    }
+    case 'b': {
+      body();
+      const t = T(0, 1.385);
+      circle(t[0], t[1], 2.4);
+      detail([T(0, 1.02), T(0, 1.2)]);
+      detail([T(-0.07, 1.12), T(0.07, 1.12)]);
+      detail([T(-0.2, 0.76), T(0.2, 0.76)]);
+      break;
+    }
+    case 'q': {
+      const xs = [-0.27, -0.135, 0, 0.135, 0.27];
+      xs.forEach(xr => { poly([T(xr - 0.07, 1.4), T(xr, 1.58), T(xr + 0.07, 1.4)]); g.closePath(); fs(); });
+      body();
+      xs.forEach(xr => { const p = T(xr, 1.6); circle(p[0], p[1], 2.1); });
+      detail([T(-0.2, 0.99), T(0.2, 0.99)]);
+      detail([T(-0.15, 1.1), T(0.15, 1.1)]);
+      break;
+    }
+    case 'k': {
+      g.beginPath(); g.rect(17.4, 6.4, 10.2, 3.4); fs();
+      g.beginPath(); g.rect(20.8, 3.6, 3.4, 10.5); fs();
+      g.fillStyle = FILL; g.fillRect(20.9, 6.5, 3.2, 3.2);
+      body();
+      detail([T(-0.2, 1.1), T(0.2, 1.1)]);
+      detail([T(-0.17, 1.2), T(0.17, 1.2)]);
+      break;
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  tex2DCache[key] = tex;
+  return tex;
+}
+
+function applyViewToPiece(g) {
+  const flat = viewMode === '2d';
+  g.userData.solid.visible = !flat;
+  g.userData.pivot.visible = flat;
+}
+
+function buildPiece(type, color) {
+  const g = new THREE.Group();
+  const solid = new THREE.Group();
+  g.add(solid);
+  const pm = pieceMats[color].clone();   // material propio para poder iluminar solo esta pieza
+  const mk = (geo, x, y, z) => {
+    const m = new THREE.Mesh(geo, pm);
+    m.position.set(x, y, z);
+    m.castShadow = true; m.receiveShadow = true;
+    solid.add(m);
+    return m;
+  };
+  const sph = (r, x, y, z, sx, sy, sz) => {
+    const m = mk(new THREE.SphereGeometry(r, 32, 24), x, y, z);
+    if (sx) m.scale.set(sx, sy, sz);
+    return m;
+  };
+  const box = (w, h, d, x, y, z) => mk(new THREE.BoxGeometry(w, h, d), x, y, z);
+
+  mk(latheFor(type), 0, 0, 0);
+
+  switch (type) {
+    case 'p':
+      sph(0.19, 0, 0.9, 0);
+      break;
+    case 'r':
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const m = box(0.15, 0.2, 0.14, Math.cos(a) * 0.3, 1.15, Math.sin(a) * 0.3);
+        m.rotation.y = -a;
+      }
+      break;
+    case 'n': {
+      const head = mk(knightGeometry(), 0, 0.17, 0);
+      head.rotation.y = -Math.PI / 2;      // mira hacia -Z (hacia el rival)
+      break;
+    }
+    case 'b':
+      sph(0.06, 0, 1.38, 0);
+      break;
+    case 'q':
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        sph(0.05, Math.cos(a) * 0.29, 1.47, Math.sin(a) * 0.29);
+      }
+      sph(0.085, 0, 1.53, 0);
+      break;
+    case 'k':
+      box(0.09, 0.36, 0.09, 0, 1.68, 0);
+      box(0.26, 0.09, 0.09, 0, 1.72, 0);
+      break;
+  }
+
+  // Ficha plana para la vista 2D (el pivote la mantiene "de pie" respecto a la pantalla)
+  const pivot = new THREE.Group();
+  pivot.position.y = 0.03;
+  const flat = new THREE.Mesh(
+    new THREE.CircleGeometry(0.5, 40),
+    new THREE.MeshBasicMaterial({ map: pieceTexture2D(type, color), transparent: true, alphaTest: 0.02, depthWrite: false })
+  );
+  flat.rotation.x = -Math.PI / 2;
+  pivot.add(flat);
+  g.add(pivot);
+
+  g.rotation.y = color === 'b' ? Math.PI : 0;
+  g.userData = {
+    isPiece: true, type, color, square: null, target: new THREE.Vector3(), grow: false,
+    solid, pivot, mat: pm, glow: 0, hoverLift: 0
+  };
+  applyViewToPiece(g);
+  return g;
+}
+
+/* ============================================================
+ *  GESTIÓN DE PIEZAS (sincronización con chess.js)
+ * ============================================================ */
+let pieces = [];
+let dying = [];
+
+function spawnPiece(type, color, square, animate) {
+  const g = buildPiece(type, color);
+  const p = squareToPos(square);
+  g.position.copy(p);
+  g.userData.square = square;
+  g.userData.target.copy(p);
+  if (animate) { g.scale.setScalar(0.01); g.userData.grow = true; }
+  scene.add(g);
+  pieces.push(g);
+  return g;
+}
+
+function clearAllPieces() {
+  pieces.concat(dying).forEach(p => scene.remove(p));
+  pieces = []; dying = [];
+}
+
+function initPieces() {
+  chess.board().forEach((row, i) => row.forEach((cell, j) => {
+    if (cell) spawnPiece(cell.type, cell.color, FILES[j] + (8 - i), false);
+  }));
+}
+
+// Reconcilia las mallas con el estado de chess.js: sirve para capturas, enroque,
+// captura al paso y promoción sin casos especiales.
+function syncPieces() {
+  const targets = [];
+  chess.board().forEach((row, i) => row.forEach((cell, j) => {
+    if (cell) targets.push({ sq: FILES[j] + (8 - i), type: cell.type, color: cell.color, matched: false });
+  }));
+  const used = new Set();
+
+  targets.forEach(t => {
+    const p = pieces.find(p => !used.has(p) && p.userData.square === t.sq &&
+      p.userData.type === t.type && p.userData.color === t.color);
+    if (p) { used.add(p); t.matched = true; p.userData.target.copy(squareToPos(t.sq)); }
+  });
+
+  targets.filter(t => !t.matched).forEach(t => {
+    const tp = squareToPos(t.sq);
+    let best = null, bd = Infinity;
+    pieces.forEach(p => {
+      if (used.has(p) || p.userData.type !== t.type || p.userData.color !== t.color) return;
+      const d = p.userData.target.distanceTo(tp);
+      if (d < bd) { bd = d; best = p; }
+    });
+    if (best) {
+      used.add(best);
+      best.userData.square = t.sq;
+      best.userData.target.copy(tp);
+    } else {
+      used.add(spawnPiece(t.type, t.color, t.sq, true)); // p. ej. promoción
+    }
+  });
+
+  pieces.filter(p => !used.has(p)).forEach(p => dying.push(p)); // capturadas
+  pieces = pieces.filter(p => used.has(p));
+}
+
+/* ============================================================
+ *  CURSOR ESPACIAL 3D
+ * ============================================================ */
+const COL_IDLE = 0x4fc3f7, COL_PINCH = 0x39ff14;
+const cursorMat = new THREE.MeshBasicMaterial({ color: COL_IDLE, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthTest: false });
+const haloMat = new THREE.MeshBasicMaterial({ color: COL_IDLE, transparent: true, opacity: 0.25, depthTest: false });
+const lineMat = new THREE.LineBasicMaterial({ color: COL_IDLE, transparent: true, opacity: 0.6, depthTest: false });
+
+const cursorRing = new THREE.Mesh(new THREE.RingGeometry(0.24, 0.34, 48), cursorMat);
+cursorRing.rotation.x = -Math.PI / 2;
+cursorRing.renderOrder = 999;
+const cursorOrb = new THREE.Mesh(new THREE.SphereGeometry(0.09, 20, 16), cursorMat);
+cursorOrb.renderOrder = 1000;
+const cursorHalo = new THREE.Mesh(new THREE.SphereGeometry(0.17, 20, 16), haloMat);
+cursorHalo.renderOrder = 998;
+cursorOrb.add(cursorHalo);
+const cursorLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 1, 0)]);
+const cursorLine = new THREE.Line(cursorLineGeo, lineMat);
+cursorLine.renderOrder = 997;
+cursorLine.frustumCulled = false;
+[cursorRing, cursorOrb, cursorLine].forEach(o => { o.visible = false; scene.add(o); });
+
+/* ============================================================
+ *  ENTRADA: MANOS (MediaPipe, hasta 2) + RESPALDO CON RATÓN (Shift)
+ * ============================================================ */
+// Dos "ranuras" de mano con identidad estable por continuidad de posición
+const slots = [0, 1].map(() => ({
+  raw: new THREE.Vector2(0.5, 0.5),      // punto medio pulgar–índice, espejado (0..1)
+  smooth: new THREE.Vector2(0.5, 0.5),   // filtrado con Lerp
+  lastSeen: -1e9, pinching: false, amount: 0,
+}));
+let primaryIdx = 0;
+let twoHands = false;
+
+const mouse = { shift: false, down: false, ndc: new THREE.Vector2() };
+const input = { present: false, lost: false, source: 'none', ndc: new THREE.Vector2(), pinching: false, lostTime: 0 };
+
+const video = $('video');
+const overlay = $('overlay');
+const octx = overlay.getContext('2d');
+const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+
+function onHandResults(results) {
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+  const list = results.multiHandLandmarks || [];
+  const now = performance.now();
+  const W = overlay.width, H = overlay.height;
+
+  const dets = list.slice(0, 2).map(lms => {
+    const thumb = lms[4], index = lms[8], wrist = lms[0], mcp = lms[9];
+    // Distancia 3D pulgar–índice relativa al tamaño de la mano (no depende de la distancia a la cámara)
+    const size = Math.hypot((wrist.x - mcp.x) * W, (wrist.y - mcp.y) * H, (wrist.z - mcp.z) * W) || 1;
+    const d = Math.hypot((thumb.x - index.x) * W, (thumb.y - index.y) * H, (thumb.z - index.z) * W);
+    return {
+      lms, ratio: d / size,
+      mx: 1.0 - (thumb.x + index.x) / 2,   // espejo en X
+      my: (thumb.y + index.y) / 2,         // Y directa
+    };
+  });
+
+  // Asignación a ranuras por proximidad con la posición anterior
+  const taken = new Set();
+  dets.forEach(d => {
+    let best = -1, bd = Infinity;
+    slots.forEach((s, i) => {
+      if (taken.has(i)) return;
+      const fresh = now - s.lastSeen < 600;
+      const dist = fresh ? Math.hypot(s.raw.x - d.mx, s.raw.y - d.my) : 5;
+      if (dist < bd) { bd = dist; best = i; }
+    });
+    taken.add(best);
+    const s = slots[best];
+    if (now - s.lastSeen > 500) s.smooth.set(d.mx, d.my);   // reaparece sin "barrido"
+    s.raw.set(d.mx, d.my);
+    s.lastSeen = now;
+    if (!s.pinching && d.ratio < PINCH_ON) s.pinching = true;      // histéresis
+    else if (s.pinching && d.ratio > PINCH_OFF) s.pinching = false;
+    s.amount = clamp((PINCH_OFF - d.ratio) / (PINCH_OFF - PINCH_ON), 0, 1);
+
+    // Esqueleto en el PiP
+    const lms = d.lms, thumb = lms[4], index = lms[8];
+    octx.lineWidth = 3;
+    octx.strokeStyle = 'rgba(255,255,255,.6)';
+    HAND_LINKS.forEach(([a, b]) => {
+      octx.beginPath();
+      octx.moveTo(lms[a].x * W, lms[a].y * H);
+      octx.lineTo(lms[b].x * W, lms[b].y * H);
+      octx.stroke();
+    });
+    octx.fillStyle = '#4fc3f7';
+    lms.forEach(p => { octx.beginPath(); octx.arc(p.x * W, p.y * H, 4, 0, Math.PI * 2); octx.fill(); });
+    octx.strokeStyle = s.pinching ? '#39ff14' : '#ffb020';
+    octx.lineWidth = 5;
+    octx.beginPath();
+    octx.moveTo(thumb.x * W, thumb.y * H);
+    octx.lineTo(index.x * W, index.y * H);
+    octx.stroke();
+    octx.fillStyle = s.pinching ? '#39ff14' : '#ffb020';
+    [thumb, index].forEach(p => { octx.beginPath(); octx.arc(p.x * W, p.y * H, 7, 0, Math.PI * 2); octx.fill(); });
+  });
+}
+
+function initHands() {
+  const camStatus = $('camStatus');
+  if (typeof Hands === 'undefined' || typeof Camera === 'undefined') {
+    camStatus.textContent = 'MediaPipe no disponible · usa Shift + ratón';
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    camStatus.textContent = 'Sin acceso a cámara (usa localhost o https) · Shift + ratón';
+    return;
+  }
+  try {
+    const hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5,
+      selfieMode: false
+    });
+    let first = true;
+    hands.onResults(r => {
+      if (first) { first = false; camStatus.textContent = 'Cámara activa · muestra tu mano'; }
+      onHandResults(r);
+    });
+    const cam = new Camera(video, {
+      onFrame: async () => { await hands.send({ image: video }); },
+      width: 640, height: 480
+    });
+    camStatus.textContent = 'Cargando modelo de manos…';
+    cam.start().catch(err => {
+      camStatus.textContent = 'Cámara denegada o no disponible · Shift + ratón';
+      console.warn('Cámara:', err);
+    });
+  } catch (err) {
+    camStatus.textContent = 'Error iniciando MediaPipe · Shift + ratón';
+    console.error(err);
+  }
+}
+
+// --- Respaldo con ratón
+window.addEventListener('keydown', e => { if (e.key === 'Shift') mouse.shift = true; });
+window.addEventListener('keyup', e => { if (e.key === 'Shift') { mouse.shift = false; mouse.down = false; } });
+window.addEventListener('blur', () => { mouse.shift = false; mouse.down = false; });
+window.addEventListener('pointermove', e => {
+  mouse.ndc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+});
+renderer.domElement.addEventListener('pointerdown', () => { if (mouse.shift) mouse.down = true; });
+window.addEventListener('pointerup', () => { mouse.down = false; });
+
+/* ============================================================
+ *  SELECCIÓN, AGARRE, GIRO DE VISTA
+ * ============================================================ */
+const raycaster = new THREE.Raycaster();
+const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const tmpV = new THREE.Vector3();
+const tmpV2 = new THREE.Vector3();
+
+const hover = { piece: null, pending: undefined, pendingT: 0, square: null, ground: null, point: null };
+const dragPoint = new THREE.Vector3(0, 0, 0);   // punto del tablero apuntado por el cursor
+let drag = null;                           // { piece, from, legal:Set, sq }
+let prevPinch = false;
+let pinchMode = 'none';                    // none | pending | ui | grab | orbit | view2 | blocked
+let pendingT = 0;
+let lastMove = null;
+let checkSq = null;
+let faceTimer = null;
+let hudHot = null;                         // control del menú señalado por la mano
+
+const orbit = { armed: false, active: false, ndc0: new THREE.Vector2(), az0: 0, pol0: 0, dist: 0 };
+const vg = { active: false, d0: 1, prevAng: 0, accum: 0, az0: 0, pol0: 0, dist0: 0 };
+
+function updateInput(dt, now) {
+  const fresh = slots.map(s => now - s.lastSeen < 250);
+  slots.forEach((s, i) => {
+    if (fresh[i]) {
+      // Filtro Lerp exponencial: base α = 0.25, más reactivo si la mano se mueve rápido
+      const err = s.smooth.distanceTo(s.raw);
+      const alpha = clamp(ALPHA + err * 5, ALPHA, 0.7);
+      s.smooth.lerp(s.raw, 1 - Math.pow(1 - alpha, dt * 60));
+    } else { s.pinching = false; s.amount = 0; }
+  });
+  if (!fresh[primaryIdx] && fresh[1 - primaryIdx]) primaryIdx = 1 - primaryIdx;
+  twoHands = fresh[0] && fresh[1];
+  const P = slots[primaryIdx];
+
+  if (fresh[primaryIdx]) {
+    const mx = clamp((P.smooth.x - 0.5) * HAND_GAIN + 0.5, 0, 1);
+    const my = clamp((P.smooth.y - 0.5) * HAND_GAIN + 0.5, 0, 1);
+    input.ndc.set(mx * 2 - 1, 1 - my * 2);          // NDC [-1, 1]
+    input.present = true; input.lost = false; input.lostTime = 0;
+    input.pinching = P.pinching; input.source = 'hand';
+  } else if (mouse.shift) {
+    input.ndc.copy(mouse.ndc);
+    input.present = true; input.lost = false; input.lostTime = 0;
+    input.pinching = mouse.down; input.source = 'mouse';
+  } else if ((drag || orbit.active || vg.active) && input.lostTime < HAND_LOST_GRACE) {
+    // Pérdida momentánea del tracking: se mantiene el agarre unos instantes
+    input.lostTime += dt;
+    input.present = true; input.lost = true; input.pinching = true;
+  } else {
+    if (drag) cancelDrag();
+    input.present = false; input.lost = false; input.pinching = false;
+    input.source = 'none'; input.lostTime = 0;
+  }
+}
+
+function ownerPiece(o) {
+  while (o && !(o.userData && o.userData.isPiece)) o = o.parent;
+  return o || null;
+}
+
+// Pieza realmente apuntada: se lanza el rayo contra la geometría visible de cada pieza
+function pickPiece() {
+  const objs = pieces.map(p => (viewMode === '2d' ? p.userData.pivot : p.userData.solid));
+  const hits = raycaster.intersectObjects(objs, true);
+  if (hits.length) {
+    const p = ownerPiece(hits[0].object);
+    if (p) return { piece: p, point: hits[0].point.clone() };
+  }
+  // Sin impacto directo: pieza más cercana en pantalla dentro de una pequeña tolerancia
+  const W = window.innerWidth, H = window.innerHeight;
+  const cx = (input.ndc.x * 0.5 + 0.5) * W, cy = (-input.ndc.y * 0.5 + 0.5) * H;
+  let best = null, bd = PICK_PX;
+  for (const p of pieces) {
+    const h = PIECE_H[p.userData.type];
+    tmpV2.set(p.userData.target.x, viewMode === '2d' ? 0.05 : h * 0.45, p.userData.target.z).project(camera);
+    const px = (tmpV2.x * 0.5 + 0.5) * W, py = (-tmpV2.y * 0.5 + 0.5) * H;
+    const d = Math.hypot(px - cx, py - cy);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return { piece: best, point: null };
+}
+
+// Cambia la pieza resaltada solo si el nuevo candidato se mantiene unos instantes (anti-parpadeo)
+function setHoverPiece(cand, now) {
+  if (cand === hover.piece) { hover.pending = undefined; return; }
+  if (hover.piece === null) { hover.piece = cand; hover.pending = undefined; return; }
+  if (hover.pending !== cand) { hover.pending = cand; hover.pendingT = now; return; }
+  if (now - hover.pendingT > 80) { hover.piece = cand; hover.pending = undefined; }
+}
+
+function hudElementAt() {
+  if (!input.present) return null;
+  const px = (input.ndc.x * 0.5 + 0.5) * window.innerWidth;
+  const py = (-input.ndc.y * 0.5 + 0.5) * window.innerHeight;
+  const el = document.elementFromPoint(px, py);
+  return el ? el.closest('#hud button, #hud label') : null;
+}
+
+function updateHover(now) {
+  hover.ground = null; hover.point = null;
+  if (hover.piece && !pieces.includes(hover.piece)) hover.piece = null;
+  if (!input.present) { hover.piece = null; hover.pending = undefined; hover.square = null; return; }
+
+  raycaster.setFromCamera(input.ndc, camera);
+  if (raycaster.ray.intersectPlane(groundPlane, tmpV)) hover.ground = tmpV.clone();
+
+  // Al empezar a cerrar los dedos la selección se bloquea: el cursor se mueve un poco al pellizcar
+  const P = slots[primaryIdx];
+  const locked = input.pinching || (input.source === 'hand' && P.amount > LOCK_AT);
+  if (hudHot) { hover.piece = null; hover.pending = undefined; }
+  else if (!locked) {
+    const r = pickPiece();
+    setHoverPiece(r.piece, now);
+    hover.point = r.point;
+  }
+  hover.square = hover.piece ? hover.piece.userData.square
+    : (hover.ground ? posToSquare(hover.ground.x, hover.ground.z) : null);
+}
+
+function tryGrab() {
+  const p = hover.piece;
+  if (!p) return 'blocked';
+  if (rules.over()) { flash('La partida ha terminado'); return 'blocked'; }
+  if (p.userData.color !== chess.turn()) {
+    flash('Es el turno de ' + (chess.turn() === 'w' ? 'las blancas' : 'las negras'));
+    return 'blocked';
+  }
+  const from = p.userData.square;
+  const moves = chess.moves({ square: from, verbose: true });
+  if (!moves.length) { flash('Esa pieza no tiene movimientos legales'); return 'blocked'; }
+  drag = { piece: p, from, legal: new Set(moves.map(m => m.to)), sq: from };
+  const c = squareToPos(from);
+  dragPoint.set(c.x, 0, c.z);
+  updateDragPoint();
+  return 'grab';
+}
+
+function updateDragPoint() {
+  raycaster.setFromCamera(input.ndc, camera);
+  // El cursor apunta a una casilla concreta del tablero (intersección con el plano y = 0)
+  if (raycaster.ray.intersectPlane(groundPlane, tmpV)) {
+    dragPoint.set(clamp(tmpV.x, -4.45, 4.45), 0, clamp(tmpV.z, -4.45, 4.45));
+  }
+  drag.sq = posToSquare(dragPoint.x, dragPoint.z);
+}
+
+function drop() {
+  const { piece, from, sq } = drag;
+  drag = null;
+  let ok = false;
+  if (sq && sq !== from) {
+    let mv = null;
+    try { mv = chess.move({ from, to: sq, promotion: 'q' }); } catch (e) { mv = null; }
+    if (mv) {
+      ok = true;
+      piece.userData.square = sq;
+      lastMove = { from, to: sq };
+      syncPieces();               // retira capturadas, mueve torre en enroque, promociona…
+      updateStatusUI();
+      scheduleFaceTurn();
+    }
+  }
+  if (!ok) {
+    piece.userData.target.copy(squareToPos(from)); // Lerp de retorno a la casilla de origen
+    if (sq && sq !== from) flash('Movimiento ilegal');
+  }
+}
+
+function cancelDrag() {
+  if (!drag) return;
+  drag.piece.userData.target.copy(squareToPos(drag.from));
+  drag = null;
+}
+
+// Rota el tablero para que quien tiene el turno lo vea desde su lado
+function scheduleFaceTurn() {
+  if (!autoRotate || rules.over()) return;
+  clearTimeout(faceTimer);
+  faceTimer = setTimeout(() => {
+    if (drag) return;
+    startCamAnim({ az: turnAz() }, 1.1);
+  }, 550);
+}
+
+/* --- Inicio y fin del pellizco --- */
+function onPinchStart() {
+  if (camAnim.active || vg.active) return 'blocked';
+  if (hudHot) { hudHot.click(); return 'ui'; }          // pellizco sobre un botón del menú = clic
+  if (hover.piece) return tryGrab();
+  // Casilla vacía o fuera del tablero: arrastrar gira la vista
+  orbit.armed = true; orbit.active = false; orbit.ndc0.copy(input.ndc);
+  return 'orbit';
+}
+
+function onPinchEnd() {
+  if (drag) drop();
+  orbit.armed = false; orbit.active = false;
+  pinchMode = 'none';
+}
+
+// Una mano: pellizca en un hueco y arrastra para girar (horizontal) e inclinar (vertical)
+function updateOrbit() {
+  if (!orbit.armed) return;
+  if (!orbit.active) {
+    if (orbit.ndc0.distanceTo(input.ndc) < 0.05) return;   // zona muerta: un pellizco sin mover no hace nada
+    orbit.active = true;
+    camAnim.active = false; applyControlLimits();
+    const s = currentSph();
+    orbit.az0 = s.az; orbit.pol0 = s.pol; orbit.dist = s.dist;
+    orbit.ndc0.copy(input.ndc);
+  }
+  const dx = input.ndc.x - orbit.ndc0.x, dy = input.ndc.y - orbit.ndc0.y;
+  const az = orbit.az0 - dx * 1.8;
+  const pol = viewMode === '3d' ? clamp(orbit.pol0 + dy * 1.0, 0.15, Math.PI * 0.47) : orbit.pol0;
+  camera.position.setFromSphericalCoords(orbit.dist, pol, az).add(controls.target);
+  camera.lookAt(controls.target);
+}
+
+// Dos manos pellizcando: separar/juntar = zoom, girar la línea entre manos = rotar el tablero
+function updateViewGesture() {
+  const both = twoHands && slots[0].pinching && slots[1].pinching && !drag;
+  if (!both) {
+    if (vg.active) { vg.active = false; if (input.pinching) pinchMode = 'blocked'; }
+    return;
+  }
+  const A = slots[0].smooth, B = slots[1].smooth;
+  const dx = (B.x - A.x) * 640, dy = (B.y - A.y) * 480;
+  const d = Math.max(Math.hypot(dx, dy), 25), ang = Math.atan2(dy, dx);
+  if (!vg.active) {
+    vg.active = true;
+    orbit.armed = false; orbit.active = false;
+    camAnim.active = false; applyControlLimits();
+    const s = currentSph();
+    vg.az0 = s.az; vg.pol0 = s.pol; vg.dist0 = s.dist;
+    vg.d0 = d; vg.prevAng = ang; vg.accum = 0;
+    pinchMode = 'view2';
+  }
+  let step = ang - vg.prevAng;
+  step = Math.atan2(Math.sin(step), Math.cos(step));
+  vg.accum += step; vg.prevAng = ang;
+  const minD = viewMode === '3d' ? 7 : 9, maxD = viewMode === '3d' ? 24 : 26;
+  const dist = clamp(vg.dist0 * vg.d0 / d, minD, maxD);
+  camera.position.setFromSphericalCoords(dist, vg.pol0, vg.az0 + vg.accum).add(controls.target);
+  camera.lookAt(controls.target);
+}
+
+/* ============================================================
+ *  RESALTADO DE CASILLAS
+ * ============================================================ */
+function updateHighlights(dt) {
+  const want = {};
+  if (lastMove) { want[lastMove.from] = [0x3b82f6, 0.25]; want[lastMove.to] = [0x3b82f6, 0.35]; }
+  if (checkSq) want[checkSq] = [0xff2a2a, 0.75];
+
+  if (drag) {
+    drag.legal.forEach(s => { want[s] = [0x16a34a, 0.4]; });
+    want[drag.from] = [0xf5b301, 0.5];
+    const ds = drag.sq;
+    if (ds) {
+      if (drag.legal.has(ds)) want[ds] = [0x4ade80, 1.0];
+      else if (ds !== drag.from) want[ds] = [0xef4444, 0.6];
+    }
+  } else if (hover.square && input.present && !hudHot) {
+    const grabbable = !rules.over() && hover.piece && hover.piece.userData.color === chess.turn();
+    want[hover.square] = grabbable ? [0xf5b301, 0.6] : [0x93c5fd, 0.3];
+  }
+
+  const k = 1 - Math.exp(-dt * 12);
+  for (const m of squareMeshes) {
+    const w = want[m.userData.square];
+    if (w) m.userData.hlColor.setHex(w[0]);
+    m.userData.hlCur += ((w ? w[1] : 0) - m.userData.hlCur) * k;
+    const mat = m.material;
+    if (m.userData.hlCur < 0.003 && !w) { mat.emissiveIntensity = 0; }
+    else { mat.emissive.copy(m.userData.hlColor); mat.emissiveIntensity = m.userData.hlCur; }
+  }
+}
+
+/* ============================================================
+ *  INTERFAZ (HUD)
+ * ============================================================ */
+let flashMsg = '', flashUntil = 0;
+function flash(msg, ms = 1800) { flashMsg = msg; flashUntil = performance.now() + ms; }
+
+let statusText = '', statusClass = '';
+function updateStatusUI() {
+  $('turn').textContent = chess.turn() === 'w' ? 'Blancas' : 'Negras';
+  $('turnDot').className = 'dot ' + chess.turn();
+
+  checkSq = null;
+  if (rules.mate()) {
+    statusText = '¡Jaque mate! Ganan ' + (chess.turn() === 'w' ? 'Negras' : 'Blancas');
+    statusClass = 'mate';
+  } else if (rules.stalemate()) {
+    statusText = 'Tablas por ahogado'; statusClass = 'info';
+  } else if (rules.draw()) {
+    statusText = 'Tablas'; statusClass = 'info';
+  } else if (rules.check()) {
+    statusText = '¡Jaque!'; statusClass = 'warn';
+  } else { statusText = ''; statusClass = ''; }
+
+  if (rules.check()) {
+    chess.board().forEach((row, i) => row.forEach((c, j) => {
+      if (c && c.type === 'k' && c.color === chess.turn()) checkSq = FILES[j] + (8 - i);
+    }));
+  }
+  refreshAlert(true);
+}
+
+let lastAlert = null;
+function refreshAlert(force) {
+  const showFlash = performance.now() < flashUntil;
+  const txt = showFlash ? flashMsg : statusText;
+  const cls = showFlash ? 'info' : statusClass;
+  const key = txt + '|' + cls;
+  if (!force && key === lastAlert) return;
+  lastAlert = key;
+  const el = $('alert');
+  el.textContent = txt;
+  el.className = cls;
+}
+
+let lastHandKey = '';
+let lastSel = '';
+function updateHandUI() {
+  let text, cls;
+  if (!input.present || input.lost) { text = 'Mano no detectada'; cls = 'off'; }
+  else if (vg.active) { text = 'Vista con 2 manos'; cls = 'grab'; }
+  else if (orbit.active) { text = 'Girando vista'; cls = 'grab'; }
+  else if (input.pinching) { text = 'Agarrando'; cls = 'grab'; }
+  else { text = 'Apuntando'; cls = 'point'; }
+  if (input.present && !input.lost && input.source === 'mouse') text += ' (ratón)';
+  const key = text + cls;
+  if (key !== lastHandKey) {
+    lastHandKey = key;
+    $('hand').textContent = text;
+    $('handDot').className = 'dot ' + cls;
+  }
+
+  // Medidor de pellizco
+  const amount = input.source === 'mouse' ? (input.pinching ? 1 : 0)
+    : (input.present && !input.lost ? slots[primaryIdx].amount : (input.pinching ? 1 : 0));
+  const fill = $('pinchFill');
+  fill.style.width = Math.round(amount * 100) + '%';
+  fill.className = input.pinching ? 'on' : '';
+
+  // Retícula 2D
+  const ret = $('reticle');
+  if (input.present) {
+    ret.style.display = 'block';
+    const px = (input.ndc.x * 0.5 + 0.5) * window.innerWidth;
+    const py = (-input.ndc.y * 0.5 + 0.5) * window.innerHeight;
+    ret.style.transform = `translate(${px}px, ${py}px)`;
+    ret.classList.toggle('pinch', input.pinching);
+  } else {
+    ret.style.display = 'none';
+  }
+
+  // Pieza apuntada
+  let sel = '—';
+  if (hover.piece && input.present) {
+    const u = hover.piece.userData;
+    sel = PIECE_NAMES[u.type] + ' ' + u.square + (u.color === chess.turn() ? '' : ' (rival)');
+  }
+  if (sel !== lastSel) { lastSel = sel; $('sel').textContent = sel; }
+}
+
+/* --- Vista 3D / 2D, giro, auto-rotación, reinicio --- */
+let last3D = null;
+function setView(mode) {
+  if (mode === viewMode) return;
+  if (drag) cancelDrag();
+  const s = currentSph();
+  if (viewMode === '3d') last3D = { pol: s.pol, dist: s.dist };
+  viewMode = mode;
+  pieces.concat(dying).forEach(applyViewToPiece);
+  $('v3d').classList.toggle('on', mode === '3d');
+  $('v2d').classList.toggle('on', mode === '2d');
+  if (mode === '2d') {
+    const az = autoRotate ? turnAz() : (Math.cos(s.az) >= 0 ? 0 : Math.PI);
+    startCamAnim({ az, pol: 0.001, dist: dist2D() }, 1.2);
+  } else {
+    const l = last3D || { pol: Math.PI / 4, dist: 14.85 };
+    startCamAnim({ az: autoRotate ? turnAz() : undefined, pol: l.pol, dist: l.dist }, 1.2);
+  }
+}
+$('v3d').addEventListener('click', () => setView('3d'));
+$('v2d').addEventListener('click', () => setView('2d'));
+
+$('flip').addEventListener('click', () => {
+  if (drag) return;
+  const s = currentSph();
+  startCamAnim({ az: Math.cos(s.az) >= 0 ? Math.PI : 0 }, 1.0);
+});
+
+$('autoRot').addEventListener('change', e => {
+  autoRotate = e.target.checked;
+  if (autoRotate && !drag) startCamAnim({ az: turnAz() }, 1.0);
+});
+
+$('reset').addEventListener('click', () => {
+  clearTimeout(faceTimer);
+  chess.reset();
+  drag = null; lastMove = null; prevPinch = false; pinchMode = 'none';
+  hover.piece = null; hover.pending = undefined;
+  clearAllPieces();
+  initPieces();
+  flashUntil = 0;
+  updateStatusUI();
+  if (autoRotate) startCamAnim({ az: 0 }, 1.0);
+});
+
+/* ============================================================
+ *  CURSOR: ACTUALIZACIÓN VISUAL
+ * ============================================================ */
+function updateCursor(now) {
+  let ringPos = null, orbPos = null;
+  if (input.present && !hudHot) {
+    if (drag) {
+      ringPos = tmpV.set(dragPoint.x, 0.04, dragPoint.z).clone();
+      orbPos = new THREE.Vector3(dragPoint.x, 0.16, dragPoint.z);
+    } else if (hover.piece) {
+      const c = squareToPos(hover.piece.userData.square);       // el aro se ancla a la casilla de la pieza apuntada
+      ringPos = new THREE.Vector3(c.x, 0.04, c.z);
+      orbPos = hover.point ? hover.point.clone() : new THREE.Vector3(c.x, 0.5, c.z);
+    } else if (hover.ground) {
+      ringPos = new THREE.Vector3(hover.ground.x, 0.04, hover.ground.z);
+      orbPos = new THREE.Vector3(hover.ground.x, 0.16, hover.ground.z);
+    }
+  }
+  const show = !!ringPos;
+  cursorRing.visible = cursorOrb.visible = show;
+  cursorLine.visible = show && !!drag;
+  if (!show) return;
+
+  const col = input.pinching ? COL_PINCH : COL_IDLE;
+  cursorMat.color.setHex(col); haloMat.color.setHex(col); lineMat.color.setHex(col);
+
+  const pulse = 1 + Math.sin(now / 140) * 0.1;
+  cursorRing.position.copy(ringPos);
+  cursorRing.scale.setScalar(input.pinching ? 0.8 : pulse);
+  cursorOrb.position.copy(orbPos);
+  cursorOrb.scale.setScalar(input.pinching ? 1.25 : pulse);
+
+  if (drag) {
+    const pp = drag.piece.position;
+    const pos = cursorLineGeo.attributes.position;
+    pos.setXYZ(0, ringPos.x, 0.04, ringPos.z);
+    pos.setXYZ(1, pp.x, pp.y, pp.z);
+    pos.needsUpdate = true;
+  }
+}
+
+/* ============================================================
+ *  BUCLE PRINCIPAL
+ * ============================================================ */
+const clock = new THREE.Clock();
+const GLOW_OWN = new THREE.Color(0xffa31a), GLOW_OTHER = new THREE.Color(0x4fc3f7);
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const now = performance.now();
+
+  updateInput(dt, now);
+  updateCamAnim(dt);
+
+  // Control del menú con la mano: resalta el botón apuntado
+  const hot = (input.present && !drag && !orbit.active && !vg.active) ? hudElementAt() : null;
+  if (hot !== hudHot) {
+    if (hudHot) hudHot.classList.remove('hh');
+    if (hot) hot.classList.add('hh');
+    hudHot = hot;
+  }
+
+  // Sin órbita del ratón mientras se arrastra, en 2D, durante transiciones o gestos de mano
+  controls.enabled = !drag && !mouse.shift && viewMode === '3d' && !camAnim.active && !orbit.active && !vg.active;
+
+  if (!drag) updateHover(now); else { hover.piece = null; hover.pending = undefined; hover.square = null; hover.ground = null; hover.point = null; }
+
+  updateViewGesture();
+
+  // Transiciones del pellizco
+  if (input.pinching && !prevPinch && input.present) {
+    if (twoHands && input.source === 'hand') { pinchMode = 'pending'; pendingT = now; }   // por si es el inicio de un gesto de 2 manos
+    else pinchMode = onPinchStart();
+  }
+  if (pinchMode === 'pending' && input.pinching) {
+    if (now - pendingT > 150) pinchMode = onPinchStart();
+  }
+  if (!input.pinching && prevPinch) onPinchEnd();
+  prevPinch = input.pinching;
+
+  if (pinchMode === 'orbit') updateOrbit();
+  if (drag) updateDragPoint();
+
+  // Las fichas planas miran siempre "hacia arriba" de la pantalla
+  const theta = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+  const flatView = viewMode === '2d';
+
+  // Animación de piezas
+  const kMove = 1 - Math.exp(-dt * 9);
+  const kDrag = 1 - Math.exp(-dt * 18);
+  const tgt = new THREE.Vector3();
+  for (const p of pieces) {
+    const u = p.userData;
+    const dragged = drag && drag.piece === p;
+
+    // Iluminación de la pieza apuntada
+    let wantGlow = 0, col = null;
+    if (!drag && hover.piece === p && !hudHot) {
+      const own = u.color === chess.turn() && !rules.over();
+      wantGlow = own ? 0.55 : 0.22;
+      col = own ? GLOW_OWN : GLOW_OTHER;
+    }
+    u.glow += (wantGlow - u.glow) * Math.min(1, kMove * 1.6);
+    if (col) u.mat.emissive.copy(col);
+    u.mat.emissiveIntensity = u.glow < 0.01 ? 0 : u.glow;
+    const wantLift = wantGlow > 0.4 ? 0.14 : 0;
+    u.hoverLift += (wantLift - u.hoverLift) * kMove;
+
+    if (dragged) {
+      // la pieza flota sobre el punto apuntado, con un leve imán hacia el centro de la casilla
+      let tx = dragPoint.x, tz = dragPoint.z;
+      if (drag.sq) {
+        const c = squareToPos(drag.sq);
+        tx += (c.x - tx) * 0.4; tz += (c.z - tz) * 0.4;
+      }
+      p.position.lerp(tgt.set(tx, LIFT(), tz), kDrag);
+    } else {
+      p.position.lerp(tgt.copy(u.target).setY(u.target.y + u.hoverLift), kMove);
+    }
+    if (flatView) {
+      u.pivot.rotation.y = theta - p.rotation.y;
+      u.pivot.scale.setScalar(dragged ? 1.2 : (wantGlow > 0.4 ? 1.1 : 1));
+    }
+    if (u.grow) {
+      const s = p.scale.x + (1 - p.scale.x) * kMove;
+      p.scale.setScalar(s);
+      if (s > 0.995) { p.scale.setScalar(1); u.grow = false; }
+    }
+  }
+  for (let i = dying.length - 1; i >= 0; i--) {
+    const p = dying[i];
+    if (flatView) p.userData.pivot.rotation.y = theta - p.rotation.y;
+    p.scale.multiplyScalar(1 - Math.min(1, dt * 7));
+    p.position.y += dt * 0.6;
+    if (p.scale.x < 0.06) { scene.remove(p); dying.splice(i, 1); }
+  }
+
+  updateHighlights(dt);
+  updateCursor(now);
+  updateHandUI();
+  refreshAlert(false);
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  if (viewMode === '2d' && !camAnim.active) {
+    const s = currentSph();
+    camera.position.setFromSphericalCoords(dist2D(), s.pol, s.az).add(controls.target);
+    camera.lookAt(controls.target);
+  }
+});
+
+/* ============================================================
+ *  ARRANQUE
+ * ============================================================ */
+initPieces();
+updateStatusUI();
+initHands();
+animate();
+
+})();
+</script>
+</body>
+</html>
