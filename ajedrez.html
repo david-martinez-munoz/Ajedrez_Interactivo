@@ -107,7 +107,7 @@
 <div id="help">
   <b>Apuntar:</b> el aro azul es tu cursor; la pieza que puedes coger se ilumina en ámbar y sube un poco.<br>
   <b>Pellizcar</b> (pulgar + índice) sobre ella para agarrarla, soltar sobre la casilla verde para mover.<br>
-  <b>Girar la vista:</b> pellizca sobre una casilla vacía y arrastra · <b>dos manos pellizcando:</b> separa para acercar, gira para rotar.<br>
+  <b>Girar la vista:</b> arrastra con el ratón o usa el botón «Girar» (el pellizco solo agarra y mueve piezas).<br>
   <b>Menú:</b> apunta a un botón y pellizca. Sin webcam: mantén <b>Shift</b> y usa el ratón.
 </div>
 
@@ -126,13 +126,14 @@
  * ============================================================ */
 const LIFT_3D = 1.2;          // altura a la que se levanta la pieza en 3D
 const LIFT_2D = 0.3;          // altura en la vista 2D (cenital)
-const PINCH_ON = 0.32;        // agarre: distancia pulgar–índice / tamaño de la mano
-const PINCH_OFF = 0.52;       // suelta (histéresis)
-const LOCK_AT = 0.35;         // al cerrar los dedos más de esto, la selección queda bloqueada
+const PINCH_ON = 0.21;        // agarre: distancia pulgar–índice / tamaño de la mano (dedos realmente unidos)
+const PINCH_OFF = 0.34;       // suelta (histéresis)
+const LOCK_AT = 0.23;         // al cerrar los dedos más de esto, la selección queda bloqueada
 const ALPHA = 0.25;           // factor base del filtro Lerp exponencial
 const HAND_GAIN = 1.5;        // amplía el recorrido útil de la mano dentro de la imagen
 const HAND_LOST_GRACE = 0.8;  // segundos antes de cancelar un arrastre si se pierde la mano
 const PICK_PX = 28;           // tolerancia (px) si el rayo no toca ninguna pieza
+const PIECE_SCALE = 0.72;     // encoge las piezas para que quepan bien dentro de su casilla
 const FILES = 'abcdefgh';
 const PIECE_NAMES = { p: 'Peón', r: 'Torre', n: 'Caballo', b: 'Alfil', q: 'Reina', k: 'Rey' };
 
@@ -224,7 +225,7 @@ function setupEnvironment() {
     const geo = new THREE.SphereGeometry(40, 32, 20);
     const pos = geo.attributes.position;
     const cols = [];
-    const top = new THREE.Color(0xe4eeff), mid = new THREE.Color(0x8fa08f), bot = new THREE.Color(0x2c3d2a);
+    const top = new THREE.Color(0xe4eeff), mid = new THREE.Color(0x9c9284), bot = new THREE.Color(0x3a2c1e);
     const c = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const t = pos.getY(i) / 40;
@@ -255,7 +256,7 @@ setupEnvironment();
 // Suelo que recibe sombras
 const floor = new THREE.Mesh(
   new THREE.CircleGeometry(14, 64),
-  new THREE.MeshStandardMaterial({ color: 0x1f2a22, roughness: 0.95, envMapIntensity: 0.1 })
+  new THREE.MeshStandardMaterial({ color: 0x241b14, roughness: 0.95, envMapIntensity: 0.1 })
 );
 floor.rotation.x = -Math.PI / 2;
 floor.position.y = -0.52;
@@ -330,41 +331,40 @@ function posToSquare(x, z) {
 }
 
 /* ============================================================
- *  TABLERO (césped) + COORDENADAS DENTRO DE LAS CASILLAS
+ *  TABLERO (madera marrón/blanca) + COORDENADAS DENTRO DE LAS CASILLAS
  * ============================================================ */
-function makeGrassTexture(light, seed) {
+function makeWoodTexture(light, seed) {
   const S = 256;
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
   let s = seed * 9301 + 49297;
   const rnd = () => { s = (s * 9301 + 49297) % 233280; return s / 233280; };
-  g.fillStyle = light ? '#a4e25b' : '#84c64a';
+  g.fillStyle = light ? '#ecdfc0' : '#744523';
   g.fillRect(0, 0, S, S);
-  for (let i = 0; i < 24; i++) {
-    const x = rnd() * S, y = rnd() * S, r = 16 + rnd() * 28, n = 9;
+  const grainLight = light ? 'rgba(255,250,232,0.45)' : 'rgba(156,100,55,0.45)';
+  const grainDark  = light ? 'rgba(198,174,130,0.4)'  : 'rgba(54,30,15,0.45)';
+  for (let i = 0; i < 10; i++) {
+    const y0 = rnd() * S;
     g.beginPath();
-    for (let k = 0; k <= n; k++) {
-      const a = (k / n) * Math.PI * 2, rr = r * (0.7 + rnd() * 0.5);
-      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr * 0.8;
-      if (k) g.lineTo(px, py); else g.moveTo(px, py);
+    g.moveTo(0, y0);
+    for (let x = 0; x <= S; x += 16) {
+      const y = y0 + Math.sin((x / S) * Math.PI * (1.4 + rnd() * 1.2) + i) * (5 + rnd() * 9);
+      g.lineTo(x, y);
     }
-    g.closePath();
-    g.fillStyle = light ? 'rgba(196,244,128,0.55)' : 'rgba(108,170,58,0.55)';
-    g.fill();
-    g.lineWidth = 3;
-    g.strokeStyle = light ? 'rgba(118,180,60,0.35)' : 'rgba(58,108,34,0.45)';
+    g.strokeStyle = rnd() > 0.5 ? grainLight : grainDark;
+    g.lineWidth = 1 + rnd() * 2.2;
     g.stroke();
   }
-  g.lineWidth = 12;
-  g.strokeStyle = light ? 'rgba(110,172,60,0.22)' : 'rgba(58,108,38,0.3)';
+  g.lineWidth = 10;
+  g.strokeStyle = light ? 'rgba(198,174,130,0.3)' : 'rgba(54,30,15,0.4)';
   g.strokeRect(0, 0, S, S);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 4;
   return tex;
 }
-const lightTex = [1, 2, 3, 4].map(i => makeGrassTexture(true, i));
-const darkTex = [5, 6, 7, 8].map(i => makeGrassTexture(false, i));
+const lightTex = [1, 2, 3, 4].map(i => makeWoodTexture(true, i));
+const darkTex = [5, 6, 7, 8].map(i => makeWoodTexture(false, i));
 
 const boardGroup = new THREE.Group();
 scene.add(boardGroup);
@@ -406,7 +406,7 @@ for (let f = 0; f < 8; f++) {
     squareMeshes.push(m);
 
     // Coordenadas en las esquinas, como en el diseño de referencia
-    const labelColor = isLight ? '#5f9a33' : '#eaffd2';
+    const labelColor = isLight ? '#6b4226' : '#f1e6cc';
     if (f === 0) {
       const l = makeLabel(String(r), labelColor);
       l.position.set(f - 3.5 - 0.33, 0.012, 4.5 - r - 0.33);
@@ -421,7 +421,7 @@ for (let f = 0; f < 8; f++) {
 }
 
 // Base y bisel perimetral
-const frameMat = new THREE.MeshStandardMaterial({ color: 0x1d3626, roughness: 0.55, metalness: 0.05, envMapIntensity: 0.3 });
+const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b2415, roughness: 0.55, metalness: 0.05, envMapIntensity: 0.3 });
 const base = new THREE.Mesh(new THREE.BoxGeometry(8.9, 0.32, 8.9), frameMat);
 base.position.y = -0.36;
 base.receiveShadow = true; base.castShadow = true;
@@ -437,7 +437,7 @@ frameBar(8.9, 0.45, 0, 4.225);
 frameBar(8.9, 0.45, 0, -4.225);
 frameBar(0.45, 8.0, 4.225, 0);
 frameBar(0.45, 8.0, -4.225, 0);
-const trimMat = new THREE.MeshStandardMaterial({ color: 0x142a1d, roughness: 0.5, envMapIntensity: 0.3 });
+const trimMat = new THREE.MeshStandardMaterial({ color: 0x241208, roughness: 0.5, envMapIntensity: 0.3 });
 [[8.1, 0.06, 0, 4.03], [8.1, 0.06, 0, -4.03], [0.06, 8.0, 4.03, 0], [0.06, 8.0, -4.03, 0]].forEach(([w, d, x, z]) => {
   const t = new THREE.Mesh(new THREE.BoxGeometry(w, 0.28, d), trimMat);
   t.position.set(x, -0.06, z);
@@ -523,20 +523,25 @@ function profileFor(type) {
 }
 const latheCache = {};
 function latheFor(type) {
-  return latheCache[type] || (latheCache[type] = new THREE.LatheGeometry(profileFor(type), 56));
+  if (!latheCache[type]) {
+    const geo = new THREE.LatheGeometry(profileFor(type), 56);
+    geo.scale(PIECE_SCALE, PIECE_SCALE, PIECE_SCALE);
+    latheCache[type] = geo;
+  }
+  return latheCache[type];
 }
 
 // Silueta del caballo (45 × 45, mirando a la izquierda). Se usa en 2D y se extruye en 3D.
 const KNIGHT_PATH = [
-  ['M', 12, 38], ['L', 33, 38],
-  ['C', 34, 33, 38, 26, 35, 18],
-  ['C', 33.5, 13.5, 30.5, 10, 28, 7.5],
-  ['L', 28.5, 3.5], ['L', 25.2, 6], ['L', 24, 3], ['L', 21.5, 7],
-  ['C', 16, 10.5, 11, 16, 8.5, 22.5],
-  ['C', 7.5, 25, 9, 27.5, 11.5, 27.5],
-  ['C', 14, 27.5, 16.5, 25.5, 19, 24],
-  ['C', 21.5, 25, 19.5, 29.5, 15, 32.5],
-  ['C', 12.5, 34.5, 11.5, 36, 12, 38],
+  ['M', 13.6, 38], ['L', 31.4, 38],
+  ['C', 32.3, 33, 35.7, 26, 33.1, 18],
+  ['C', 31.9, 13.5, 29.3, 10, 27.2, 7.5],
+  ['L', 28.2, 2], ['L', 24.8, 6], ['L', 23.2, 1.3], ['L', 21.7, 7],
+  ['C', 16.1, 10, 11.45, 16.5, 8.5, 23],
+  ['C', 7.6, 25.5, 10.2, 28, 13.15, 27.5],
+  ['C', 15.3, 27.5, 17.4, 25.5, 19.5, 24],
+  ['C', 21.65, 25, 20, 29.5, 16.1, 32.5],
+  ['C', 14, 34.5, 13.15, 36, 13.6, 38],
   ['Z'],
 ];
 function tracePath(t, cmds, f) {
@@ -556,21 +561,22 @@ function knightGeometry() {
   const shape = new THREE.Shape();
   tracePath(shape, KNIGHT_PATH, (x, y) => [(x - 22.5) * k, (38 - y) * k]);
   knightGeo = new THREE.ExtrudeGeometry(shape, {
-    depth: 0.3, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelSegments: 4, curveSegments: 14
+    depth: 0.22, bevelEnabled: true, bevelThickness: 0.045, bevelSize: 0.035, bevelSegments: 4, curveSegments: 14
   });
-  knightGeo.translate(0, 0, -0.15);
+  knightGeo.translate(0, 0, -0.11);
+  knightGeo.scale(PIECE_SCALE, PIECE_SCALE, PIECE_SCALE);
   return knightGeo;
 }
 
 /* ============================================================
  *  PIEZAS 3D (torneadas, brillantes) + FICHAS 2D (siluetas con contorno)
  * ============================================================ */
-// "Blancas" doradas y "negras" de cromo oscuro, como en el diseño de referencia
+// "Blancas" doradas y "negras" de cromo oscuro, metálicas y con reflejos marcados
 const pieceMats = {
-  w: new THREE.MeshStandardMaterial({ color: 0xf0cb5a, metalness: 0.62, roughness: 0.22, envMapIntensity: 1.25 }),
-  b: new THREE.MeshStandardMaterial({ color: 0x1b1b20, metalness: 0.75, roughness: 0.17, envMapIntensity: 1.35 }),
+  w: new THREE.MeshStandardMaterial({ color: 0xe8b923, metalness: 0.8, roughness: 0.28, envMapIntensity: 1.2 }),
+  b: new THREE.MeshStandardMaterial({ color: 0x17171c, metalness: 0.85, roughness: 0.18, envMapIntensity: 1.25 }),
 };
-const PIECE_H = { p: 1.07, r: 1.3, n: 1.46, b: 1.44, q: 1.62, k: 1.85 };
+const PIECE_H = { p: 1.07 * PIECE_SCALE, r: 1.3 * PIECE_SCALE, n: 1.46 * PIECE_SCALE, b: 1.44 * PIECE_SCALE, q: 1.62 * PIECE_SCALE, k: 2.02 * PIECE_SCALE };
 
 const tex2DCache = {};
 function pieceTexture2D(type, color) {
@@ -583,9 +589,9 @@ function pieceTexture2D(type, color) {
   const g = c.getContext('2d');
   g.scale(u, u);
   const white = color === 'w';
-  const FILL = white ? '#ffffff' : '#2a2a2a';
+  const FILL = white ? '#e6d9b8' : '#241a12';
   const INK = '#0b0b0b';
-  const DET = white ? '#0b0b0b' : '#f2f2f2';
+  const DET = white ? '#6b4226' : '#e8d9b8';
   g.lineJoin = 'round'; g.lineCap = 'round';
   g.fillStyle = FILL; g.strokeStyle = INK; g.lineWidth = 1.6;
 
@@ -686,17 +692,17 @@ function buildPiece(type, color) {
   const pm = pieceMats[color].clone();   // material propio para poder iluminar solo esta pieza
   const mk = (geo, x, y, z) => {
     const m = new THREE.Mesh(geo, pm);
-    m.position.set(x, y, z);
+    m.position.set(x * PIECE_SCALE, y * PIECE_SCALE, z * PIECE_SCALE);
     m.castShadow = true; m.receiveShadow = true;
     solid.add(m);
     return m;
   };
   const sph = (r, x, y, z, sx, sy, sz) => {
-    const m = mk(new THREE.SphereGeometry(r, 32, 24), x, y, z);
+    const m = mk(new THREE.SphereGeometry(r * PIECE_SCALE, 32, 24), x, y, z);
     if (sx) m.scale.set(sx, sy, sz);
     return m;
   };
-  const box = (w, h, d, x, y, z) => mk(new THREE.BoxGeometry(w, h, d), x, y, z);
+  const box = (w, h, d, x, y, z) => mk(new THREE.BoxGeometry(w * PIECE_SCALE, h * PIECE_SCALE, d * PIECE_SCALE), x, y, z);
 
   mk(latheFor(type), 0, 0, 0);
 
@@ -705,9 +711,9 @@ function buildPiece(type, color) {
       sph(0.19, 0, 0.9, 0);
       break;
     case 'r':
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const m = box(0.15, 0.2, 0.14, Math.cos(a) * 0.3, 1.15, Math.sin(a) * 0.3);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        const m = box(0.1, 0.2, 0.15, Math.cos(a) * 0.3, 1.16, Math.sin(a) * 0.3);
         m.rotation.y = -a;
       }
       break;
@@ -717,7 +723,7 @@ function buildPiece(type, color) {
       break;
     }
     case 'b':
-      sph(0.06, 0, 1.38, 0);
+      sph(0.09, 0, 1.4, 0);
       break;
     case 'q':
       for (let i = 0; i < 8; i++) {
@@ -727,8 +733,9 @@ function buildPiece(type, color) {
       sph(0.085, 0, 1.53, 0);
       break;
     case 'k':
-      box(0.09, 0.36, 0.09, 0, 1.68, 0);
-      box(0.26, 0.09, 0.09, 0, 1.72, 0);
+      sph(0.12, 0, 1.58, 0);
+      box(0.08, 0.32, 0.08, 0, 1.86, 0);
+      box(0.26, 0.08, 0.08, 0, 1.78, 0);
       break;
   }
 
@@ -736,7 +743,7 @@ function buildPiece(type, color) {
   const pivot = new THREE.Group();
   pivot.position.y = 0.03;
   const flat = new THREE.Mesh(
-    new THREE.CircleGeometry(0.5, 40),
+    new THREE.CircleGeometry(0.5 * PIECE_SCALE, 40),
     new THREE.MeshBasicMaterial({ map: pieceTexture2D(type, color), transparent: true, alphaTest: 0.02, depthWrite: false })
   );
   flat.rotation.x = -Math.PI / 2;
@@ -935,7 +942,7 @@ function initHands() {
       locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
     });
     hands.setOptions({
-      maxNumHands: 2,
+      maxNumHands: 1,
       modelComplexity: 1,
       minDetectionConfidence: 0.6,
       minTrackingConfidence: 0.5,
@@ -1162,9 +1169,8 @@ function onPinchStart() {
   if (camAnim.active || vg.active) return 'blocked';
   if (hudHot) { hudHot.click(); return 'ui'; }          // pellizco sobre un botón del menú = clic
   if (hover.piece) return tryGrab();
-  // Casilla vacía o fuera del tablero: arrastrar gira la vista
-  orbit.armed = true; orbit.active = false; orbit.ndc0.copy(input.ndc);
-  return 'orbit';
+  // Casilla vacía o fuera del tablero: el pellizco ya no mueve la vista
+  return 'blocked';
 }
 
 function onPinchEnd() {
